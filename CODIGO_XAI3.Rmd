@@ -1,0 +1,158 @@
+---
+title: "XAI 3: Model-agnostic methods"
+author: "Pol"
+date: "2025-05-14"
+output: html_document
+---
+
+```{r}
+# Load necessary libraries
+library(partykit)
+library(dplyr)
+library(ggplot2)
+
+# Load and prepare the dataset
+day_data <- read.csv("day.csv")
+
+# One-hot encoding for the season variable
+day_data <- day_data %>%
+  mutate(season_1 = as.integer(season == 1),
+         season_2 = as.integer(season == 2),
+         season_3 = as.integer(season == 3))
+
+# Create MISTY and RAIN weather features
+day_data <- day_data %>%
+  mutate(
+    MISTY = ifelse(weathersit == 2, 1, 0),
+    RAIN = ifelse(weathersit %in% c(3, 4), 1, 0)
+  )
+
+# Denormalize temp, humidity, and windspeed
+day_data <- day_data %>%
+  mutate(
+    temp_denorm = temp * 47 - 8,
+    hum_denorm = hum * 100,
+    windspeed_denorm = windspeed * 67
+  )
+
+# Create feature with number of days since January 1st, 2011
+day_data$date <- as.Date(day_data$dteday)
+day_data$days_since_2011 <- as.numeric(difftime(day_data$date, as.Date("2011-01-01"), units = "days"))
+
+# Select only the relevant features
+features <- day_data %>%
+  select(cnt, workingday, holiday, season_1, season_2, season_3, MISTY, RAIN,
+         temp_denorm, hum_denorm, windspeed_denorm, days_since_2011)
+```
+
+
+```{r}
+install.packages('pdp')
+```
+
+```{r}
+# Librerías necesarias
+library(randomForest)
+library(pdp)
+
+# Selección de variables para el modelo
+model_data <- features %>%
+  select(cnt, days_since_2011, temp_denorm, hum_denorm, windspeed_denorm)
+
+# Entrenar el modelo Random Forest
+set.seed(42)
+rf_model <- randomForest(cnt ~ ., data = model_data, ntree = 300)
+
+# Función para generar gráfico PDP
+plot_pdp <- function(var_name) {
+  pd <- partial(rf_model, pred.var = var_name, grid.resolution = 20)
+  autoplot(pd, contour = FALSE) +
+    ggtitle(paste("PDP -", var_name)) +
+    theme_minimal() +
+    ylab("Predicted cnt")
+}
+
+# Graficar los efectos marginales
+p1 <- plot_pdp("days_since_2011")
+p2 <- plot_pdp("temp_denorm")
+p3 <- plot_pdp("hum_denorm")
+p4 <- plot_pdp("windspeed_denorm")
+
+# Mostrar los gráficos
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+
+```
+
+
+```{r}
+# Usar el dataset procesado previamente
+set.seed(123)
+sampled_data <- features %>%
+  select(cnt, temp_denorm, hum_denorm, windspeed_denorm, days_since_2011) %>%
+  sample_n(300)  # Reducir tamaño de muestra
+
+# Entrenar modelo Random Forest con la muestra
+rf_model_sample <- randomForest(cnt ~ temp_denorm + hum_denorm + windspeed_denorm + days_since_2011,
+                                data = sampled_data, ntree = 300)
+
+# Calcular el PDP 2D para temperatura y humedad
+pdp_2d <- partial(rf_model_sample,
+                  pred.var = c("temp_denorm", "hum_denorm"),
+                  grid.resolution = 20,
+                  progress = "text")
+
+# Graficar el resultado como mapa de calor
+ggplot(pdp_2d, aes(x = temp_denorm, y = hum_denorm, fill = yhat)) +
+  geom_tile(width = 1.5, height = 5) +
+  scale_fill_viridis_c(option = "inferno") +
+  labs(
+    title = "PDP 2D: Efecto conjunto de Temperatura y Humedad",
+    x = "Temperatura (°C)",
+    y = "Humedad (%)",
+    fill = "Alquileres predichos"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Leer los datos
+house_data <- read.csv("kc_house_data.csv")
+
+# Selección de columnas relevantes
+house_data_subset <- house_data %>%
+  select(price, bedrooms, bathrooms, sqft_living, sqft_lot, floors, yr_built)
+
+# Muestra aleatoria para evitar alto coste computacional
+set.seed(123)
+sample_data <- sample_n(house_data_subset, 1000)
+
+# Entrenar modelo Random Forest
+rf_model <- randomForest(price ~ bedrooms + bathrooms + sqft_living + sqft_lot + floors + yr_built,
+                         data = sample_data,
+                         ntree = 300)
+
+# Función para graficar PDP univariado
+plot_pdp <- function(varname) {
+  pd <- partial(rf_model, pred.var = varname, grid.resolution = 20)
+  autoplot(pd, contour = FALSE) +
+    ggtitle(paste("PDP -", varname)) +
+    theme_minimal() +
+    ylab("Predicted Price")
+}
+
+# Graficar los efectos marginales
+p1 <- plot_pdp("bedrooms")
+p2 <- plot_pdp("bathrooms")
+p3 <- plot_pdp("sqft_living")
+p4 <- plot_pdp("floors")
+
+# Mostrar
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+```
+
